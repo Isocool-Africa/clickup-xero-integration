@@ -115,7 +115,13 @@ def create_xero_quote(task_name: str, description: str, assignee: str) -> dict:
 
 def get_task_folder_id(task: dict) -> str | None:
     """Extract the folder ID from a ClickUp task object (best-effort)."""
-    return task.get("folder", {}).get("id") or task.get("list", {}).get("folder", {}).get("id")
+    # Try multiple locations ClickUp uses depending on webhook version
+    return (
+        task.get("folder", {}).get("id")
+        or task.get("list", {}).get("folder", {}).get("id")
+        or task.get("folder_id")
+        or task.get("list", {}).get("folder_id")
+    )
 
 
 def extract_assignee(task: dict) -> str:
@@ -155,12 +161,17 @@ def clickup_webhook():
         return jsonify({"status": "ignored", "reason": "not a taskCreated event"}), 200
 
     task = data.get("task", {})
+    logger.info(f"Task payload keys: {list(task.keys())}")
+    logger.info(f"Task list: {task.get('list', {})} | folder: {task.get('folder', {})} | folder_id: {task.get('folder_id')}")
 
     # Filter by folder if CLICKUP_FOLDER_ID is set
     if CLICKUP_FOLDER_ID:
         folder_id = get_task_folder_id(task)
-        if str(folder_id) != str(CLICKUP_FOLDER_ID):
-            logger.info(f"Task folder {folder_id!r} != watched folder {CLICKUP_FOLDER_ID!r} — skipping.")
+        # Also check if the list's folder matches via the list_id → lookup not needed
+        # ClickUp sometimes sends list_id only — check if task list id is 901523176905 (Job Cards)
+        list_id = str(task.get("list", {}).get("id") or task.get("list_id") or "")
+        if str(folder_id) != str(CLICKUP_FOLDER_ID) and list_id != "901523176905":
+            logger.info(f"Task folder {folder_id!r} / list {list_id!r} != watched folder {CLICKUP_FOLDER_ID!r} — skipping.")
             return jsonify({"status": "ignored", "reason": "wrong folder"}), 200
 
     task_name   = task.get("name", "Unnamed Task")
